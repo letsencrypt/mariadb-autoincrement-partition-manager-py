@@ -1,10 +1,13 @@
 import tempfile
 import unittest
 import pymysql
+import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from .cli import (
     all_configured_tables_are_compatible,
+    bootstrap_cmd,
+    calculate_sql_alters_from_state_info,
     config_from_args,
     do_partition,
     PARSER,
@@ -349,3 +352,185 @@ partitionmanager:
 """,
                 datetime.now(),
             )
+
+    def test_bootstrap_cmd_out(self):
+        with tempfile.NamedTemporaryFile() as outfile:
+            args = PARSER.parse_args(
+                [
+                    "--mariadb",
+                    str(fake_exec),
+                    "bootstrap",
+                    "--out",
+                    outfile.name,
+                    "--table",
+                    "partitioned_yesterday",
+                    "two",
+                ]
+            )
+
+            output = bootstrap_cmd(args)
+            self.assertEqual({}, output)
+
+            out_yaml = yaml.safe_load(Path(outfile.name).read_text())
+            self.assertTrue("time" in out_yaml)
+            self.assertTrue(isinstance(out_yaml["time"], datetime))
+            del out_yaml["time"]
+
+            self.assertEqual(
+                out_yaml,
+                {"tables": {"partitioned_yesterday": {"id": 150}, "two": {"id": 150}}},
+            )
+
+    def test_bootstrap_cmd_out_unpartitioned(self):
+        with tempfile.NamedTemporaryFile() as outfile:
+            args = PARSER.parse_args(
+                [
+                    "--mariadb",
+                    str(fake_exec),
+                    "bootstrap",
+                    "--out",
+                    outfile.name,
+                    "--table",
+                    "unpartitioned",
+                    "two",
+                ]
+            )
+
+            with self.assertRaisesRegex(
+                Exception, "Table unpartitioned is not partitioned"
+            ):
+                bootstrap_cmd(args)
+
+    def test_bootstrap_cmd_out_unpartitioned_with_override(self):
+        with tempfile.NamedTemporaryFile() as outfile:
+            args = PARSER.parse_args(
+                [
+                    "--mariadb",
+                    str(fake_exec),
+                    "bootstrap",
+                    "--assume-partitioned-on",
+                    "id",
+                    "--out",
+                    outfile.name,
+                    "--table",
+                    "unpartitioned",
+                ]
+            )
+            output = bootstrap_cmd(args)
+            self.assertEqual({}, output)
+
+            out_yaml = yaml.safe_load(Path(outfile.name).read_text())
+            self.assertTrue("time" in out_yaml)
+            self.assertTrue(isinstance(out_yaml["time"], datetime))
+            del out_yaml["time"]
+
+            self.assertEqual(out_yaml, {"tables": {"unpartitioned": {"id": 150}}})
+
+    def test_bootstrap_cmd_in(self):
+        with tempfile.NamedTemporaryFile(mode="w+") as infile:
+            yaml.dump(
+                {
+                    "tables": {"partitioned_yesterday": {"id": 50}, "two": {"id": 0}},
+                    "time": datetime(2021, 4, 1, tzinfo=timezone.utc),
+                },
+                infile,
+            )
+
+            args = PARSER.parse_args(
+                [
+                    "--mariadb",
+                    str(fake_exec),
+                    "bootstrap",
+                    "--in",
+                    infile.name,
+                    "--table",
+                    "partitioned_yesterday",
+                    "two",
+                ]
+            )
+
+            conf = config_from_args(args)
+            conf.curtime = datetime(2021, 4, 21, tzinfo=timezone.utc)
+            self.maxDiff = None
+
+            output = calculate_sql_alters_from_state_info(
+                conf, Path(infile.name).open("r")
+            )
+            self.assertEqual(
+                output,
+                {
+                    "partitioned_yesterday": [
+                        "ALTER TABLE `partitioned_yesterday` REORGANIZE "
+                        "PARTITION `p_20210504` INTO (PARTITION `p_20210421` "
+                        "VALUES LESS THAN (150), PARTITION `p_20210521` "
+                        "VALUES LESS THAN (300), PARTITION `p_20210620` "
+                        "VALUES LESS THAN MAXVALUE);"
+                    ],
+                    "two": [
+                        "ALTER TABLE `two` REORGANIZE PARTITION `p_20201204` INTO (PARTITION "
+                        "`p_20210421` VALUES LESS THAN (150), PARTITION `p_20210521` VALUES "
+                        "LESS THAN (375), PARTITION `p_20210620` VALUES LESS THAN MAXVALUE);"
+                    ],
+                },
+            )
+
+    def test_bootstrap_cmd_in_unpartitioned_with_override(self):
+        with tempfile.NamedTemporaryFile(mode="w+") as infile:
+            yaml.dump(
+                {
+                    "tables": {"unpartitioned": {"id": 50}},
+                    "time": datetime(2021, 4, 1, tzinfo=timezone.utc),
+                },
+                infile,
+            )
+
+            args = PARSER.parse_args(
+                [
+                    "--mariadb",
+                    str(fake_exec),
+                    "bootstrap",
+                    "--assume-partitioned-on",
+                    "id",
+                    "--in",
+                    infile.name,
+                    "--table",
+                    "unpartitioned",
+                ]
+            )
+            conf = config_from_args(args)
+            conf.curtime = datetime(2021, 4, 21, tzinfo=timezone.utc)
+            self.maxDiff = None
+
+            output = calculate_sql_alters_from_state_info(
+                conf, Path(infile.name).open("r")
+            )
+            self.assertEqual(
+                output,
+                {
+                    "unpartitioned": [
+                        "ALTER TABLE `unpartitioned` REORGANIZE PARTITION `p_assumed` "
+                        "INTO (PARTITION `p_20210421` VALUES LESS THAN (150), "
+                        "PARTITION `p_20210521` VALUES LESS THAN (300), PARTITION "
+                        "`p_20210620` VALUES LESS THAN MAXVALUE);"
+                    ]
+                },
+            )
+
+    def test_bootstrap_cmd_in_out(self):
+        with tempfile.NamedTemporaryFile() as outfile, tempfile.NamedTemporaryFile(
+            mode="w+"
+        ) as infile:
+            with self.assertRaises(SystemExit):
+                PARSER.parse_args(
+                    [
+                        "--mariadb",
+                        str(fake_exec),
+                        "bootstrap",
+                        "--out",
+                        outfile.name,
+                        "--in",
+                        infile.name,
+                        "--table",
+                        "flip",
+                    ]
+                )

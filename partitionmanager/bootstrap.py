@@ -25,6 +25,16 @@ RATE_UNIT = timedelta(hours=1)
 MINIMUM_FUTURE_DELTA = timedelta(hours=2)
 
 
+def _override_config_to_map_data(conf):
+    """Return an analog to get_partition_map from override data in conf"""
+    return {
+        "range_cols": [str(x) for x in conf.assume_partitioned_on],
+        "partitions": [
+            MaxValuePartition("p_assumed", count=len(conf.assume_partitioned_on))
+        ],
+    }
+
+
 def write_state_info(conf, out_fp):
     """
     Write the state info for tables defined in conf to the provided file-like
@@ -35,11 +45,15 @@ def write_state_info(conf, out_fp):
     log.info("Writing current state information")
     state_info = {"time": conf.curtime, "tables": dict()}
     for table in conf.tables:
-        problem = table_is_compatible(conf.dbcmd, table)
-        if problem:
-            raise Exception(problem)
+        map_data = None
+        if not conf.assume_partitioned_on:
+            problem = table_is_compatible(conf.dbcmd, table)
+            if problem:
+                raise Exception(problem)
+            map_data = get_partition_map(conf.dbcmd, table)
+        else:
+            map_data = _override_config_to_map_data(conf)
 
-        map_data = get_partition_map(conf.dbcmd, table)
         positions = get_current_positions(conf.dbcmd, table, map_data["range_cols"])
 
         log.info(f'(Table("{table.name}"): {positions}),')
@@ -130,11 +144,16 @@ def calculate_sql_alters_from_state_info(conf, in_fp):
             log.info(f"Skipping {table_name} as it is not in the current config")
             continue
 
-        problem = table_is_compatible(conf.dbcmd, table)
-        if problem:
-            raise Exception(problem)
+        map_data = None
 
-        map_data = get_partition_map(conf.dbcmd, table)
+        if not conf.assume_partitioned_on:
+            problem = table_is_compatible(conf.dbcmd, table)
+            if problem:
+                raise Exception(problem)
+            map_data = get_partition_map(conf.dbcmd, table)
+        else:
+            map_data = _override_config_to_map_data(conf)
+
         current_positions = get_current_positions(
             conf.dbcmd, table, map_data["range_cols"]
         )

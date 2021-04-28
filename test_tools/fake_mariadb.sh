@@ -64,7 +64,7 @@ if echo $stdin | grep "SHOW CREATE" >/dev/null; then
     tailPartName="p_20201204"
   fi
 
-	cat <<EOF
+  cat <<EOF
 <?xml version="1.0"?>
 
 <resultset statement="show create table burgers" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -74,6 +74,15 @@ if echo $stdin | grep "SHOW CREATE" >/dev/null; then
   \`id\` bigint(20) NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (\`id\`),
 ) ENGINE=InnoDB AUTO_INCREMENT=150 DEFAULT CHARSET=utf8
+EOF
+  if echo $stdin | grep "unpartitioned" >/dev/null; then
+    cat <<EOF
+    </field>
+  </row>
+</resultset>
+EOF
+  else
+    cat <<EOF
  PARTITION BY RANGE (\`id\`)
 (PARTITION \`${earlyPartName}\` VALUES LESS THAN (100) ENGINE = InnoDB,
  PARTITION \`${midPartName}\` VALUES LESS THAN (200) ENGINE = InnoDB,
@@ -81,6 +90,7 @@ if echo $stdin | grep "SHOW CREATE" >/dev/null; then
   </row>
 </resultset>
 EOF
+  fi
 	exit
 fi
 

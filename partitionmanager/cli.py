@@ -75,6 +75,7 @@ class Config:
         self.curtime = datetime.now(tz=timezone.utc)
         self.partition_period = timedelta(days=30)
         self.prometheus_stats_path = None
+        self.assume_partitioned_on = None
 
     def from_argparse(self, args):
         """
@@ -96,6 +97,8 @@ class Config:
             self.noop = args.noop
         if "prometheus_stats" in args:
             self.prometheus_stats_path = args.prometheus_stats
+        if "assume_partitioned_on" in args:
+            self.assume_partitioned_on = args.assume_partitioned_on
 
     def from_yaml_file(self, file):
         """
@@ -238,6 +241,13 @@ BOOTSTRAP_GROUP.add_argument(
 )
 BOOTSTRAP_GROUP.add_argument(
     "--out", "-o", dest="outfile", type=argparse.FileType("w"), help="output YAML"
+)
+BOOTSTRAP_PARSER.add_argument(
+    "--assume-partitioned-on",
+    type=SqlInput,
+    action="append",
+    help="Assume tables are partitioned by this column name, can be specified "
+    "multiple times for multi-column partitions",
 )
 BOOTSTRAP_PARSER.add_argument(
     "--table", "-t", type=SqlInput, nargs="+", help="table names, overwriting config"
