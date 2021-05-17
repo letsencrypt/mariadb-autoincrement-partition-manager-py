@@ -1,0 +1,46 @@
+version: 2.1
+
+orbs:
+  python: circleci/python@0.2.1
+
+jobs:
+  python-build-and-test:
+    executor: python/default
+    steps:
+      - checkout
+      - run: pip install --editable .
+      - run:
+          name: make test-reesults dir
+          command: |
+            mkdir test-results
+
+      - run:
+         name: Check format with Black
+         command: |
+            pip install "black==19.3b0"
+            python -m black --check .
+      - run:
+          name: run tests
+          command: |
+            pip install pytest
+            pytest --junitxml=test-results/junit.xml
+      - run:
+         name: Check for linting errors
+         command: |
+            pip install "pylint==2.6.0"
+            python -m pylint -E partitionmanager
+      - run:
+         name: Check for flake8 errors
+         command: |
+            pip install "flake8==3.8.4"
+            python -m flake8
+
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: test-results
+
+workflows:
+  main:
+    jobs:
+      - python-build-and-test
