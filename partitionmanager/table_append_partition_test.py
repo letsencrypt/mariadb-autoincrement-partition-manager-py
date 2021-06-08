@@ -725,6 +725,38 @@ class TestPartitionAlgorithm(unittest.TestCase):
             ],
         )
 
+    def test_plan_partition_changes_misprediction(self):
+        """ We have to handle the case where the partition list doesn't cleanly
+        match reality. """
+        planned = _plan_partition_changes(
+            [
+                mkPPart("p_20210505", 9505010028),
+                mkPPart("p_20210604", 10152257517),
+                mkPPart("p_20210704", 10799505006),
+                mkTailPart("p_20210803"),
+            ],
+            [10264818175],
+            datetime(2021, 6, 8, tzinfo=timezone.utc),
+            timedelta(days=30),
+            3,
+        )
+
+        self.assertEqual(
+            planned,
+            [
+                ChangePlannedPartition(mkPPart("p_20210704", 10799505006)),
+                ChangePlannedPartition(mkTailPart("p_20210803")).set_position(
+                    [11578057459]
+                ),
+                NewPlannedPartition()
+                .set_position([12356609912])
+                .set_timestamp(datetime(2021, 9, 2, tzinfo=timezone.utc)),
+                NewPlannedPartition()
+                .set_columns(1)
+                .set_timestamp(datetime(2021, 10, 2, tzinfo=timezone.utc)),
+            ],
+        )
+
     def test_should_run_changes(self):
         self.assertFalse(
             _should_run_changes(

@@ -211,7 +211,7 @@ def _get_position_increase_per_day(p1, p2):
         # An empty list skips this pair in get_weighted_position_increase
         return list()
     if p1.timestamp() >= p2.timestamp():
-        raise ValueError(f"p1 {p1} must be before p2 {p2}")
+        raise ValueError(f"p1 {p1} must have a timestamp before p2 {p2}")
     if p1.num_columns != p2.num_columns:
         raise ValueError(f"p1 {p1} and p2 {p2} must have the same number of columns")
     delta_time = p2.timestamp() - p1.timestamp()
@@ -349,26 +349,37 @@ def _plan_partition_changes(
     if not active_partition:
         raise Exception("Active Partition can't be None")
 
-    if active_partition.timestamp() >= evaluation_time:
-        raise ValueError(
-            f"Evaluation time ({evaluation_time}) must be after "
-            f"the active partition {active_partition}."
-        )
+    rate_relevant_partitions = None
 
-    # This bit of weirdness is a fencepost issue: The partition list is strictly
-    # increasing until we get to "now" and the active partition. "Now" actually
-    # takes place _after_ active partition's start date (naturally), but
-    # contains a position that is before the top of active, by definition. For
-    # the rate processing to work, we need to swap the "now" and the active
-    # partition's dates and positions.
-    rate_relevant_partitions = filled_partitions + [
-        partitionmanager.types.InstantPartition(
-            active_partition.timestamp(), current_positions
-        ),
-        partitionmanager.types.InstantPartition(
-            evaluation_time, active_partition.positions
-        ),
-    ]
+    if active_partition.timestamp() < evaluation_time:
+        # This bit of weirdness is a fencepost issue: The partition list is strictly
+        # increasing until we get to "now" and the active partition. "Now" actually
+        # takes place _after_ active partition's start date (naturally), but
+        # contains a position that is before the top of active, by definition. For
+        # the rate processing to work, we need to swap the "now" and the active
+        # partition's dates and positions.
+        rate_relevant_partitions = filled_partitions + [
+            partitionmanager.types.InstantPartition(
+                active_partition.timestamp(), current_positions
+            ),
+            partitionmanager.types.InstantPartition(
+                evaluation_time, active_partition.positions
+            ),
+        ]
+    else:
+        # If the active partition's start date is later than today, then we
+        # previously mispredicted the rate of change. There's nothing we can
+        # do about that at this point, except limit our rate-of-change calculation
+        # to exclude the future-dated, irrelevant partition.
+        log.debug(
+            f"Misprediction: Evaluation time ({evaluation_time}) is "
+            f"before the active partition {active_partition}. Excluding from "
+            "rate calculations."
+        )
+        rate_relevant_partitions = filled_partitions + [
+            partitionmanager.types.InstantPartition(evaluation_time, current_positions)
+        ]
+
     rates = _get_weighted_position_increase_per_day_for_partitions(
         rate_relevant_partitions
     )
